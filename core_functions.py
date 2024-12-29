@@ -139,6 +139,13 @@ def fetch_day_ahead_prices(
     }
 
     ext_api_config_obj = ext_api_config.ExternalApiConfig()
+    url = ext_api_config_obj.get_entsoe_web_url()
+
+    logger.info("Fetching prices from ENTSO-E's Transparency Platform.")
+    logger.info(f"ENTSO-E's API url: {url}")
+    logger.info(f"Starting time: {start_dt_cet}")
+    logger.info(f"End time: {end_dt_cet}")
+    logger.info(f"Bidding zones: {bidding_zone_list}")
 
     # ENTSO-E identifies bidding zones by so-called eic codes
     # The map between bidding zone and EIC codes are maintained in ext_api_confit.py
@@ -149,7 +156,6 @@ def fetch_day_ahead_prices(
         # (both in_Domain and out_Domain needed)
         entsoe_payload["in_Domain"] = bidding_zone_to_eic_code_dict[bidding_zone]
         entsoe_payload["out_Domain"] = bidding_zone_to_eic_code_dict[bidding_zone]
-        url = ext_api_config_obj.get_entsoe_web_url()
         # Request data from ENTSO-E
         response = requests.get(url, params=entsoe_payload, timeout=180)
 

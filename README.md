@@ -59,4 +59,4 @@ python entsoe_price_extract_cli.py -a norway,DE -s 2024-12-12 -e 2024-12-13 -p -
 - The output directory must exist if an output file path is specified.
 
 # Use of the `fetch_day_ahead_prices` function (see `entsoe_price_extract_demo`)
-The main function used to collect prices is the `fetch_day_ahead_prices` found in `core_functions`. THe script `entsoe_price_extract_demo` showcase the use of this function.
+The main function used to collect prices is the `fetch_day_ahead_prices` found in `core_functions`. The script `entsoe_price_extract_demo` showcase the use of this function.
