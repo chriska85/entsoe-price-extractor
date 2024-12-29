@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[project]
+version="1.0.0"
+name = "entsoe-price-extractor"
+    dependencies = [
+    "pandas",
+    "requests",
+    "python-dotenv",
+    "plotly"
+]
