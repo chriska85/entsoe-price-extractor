@@ -23,7 +23,7 @@ env_vars = dotenv_values(".env")
 entso_e_token = env_vars.get("MY_ENTSOE_TOKEN")
 
 # Configure the root logger
-logging_format = "%(asctime)s[%(name)s][%(levelname)s]: %(message)s"
+logging_format = "%(asctime)s [%(levelname)s][%(name)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=logging_format)
 logger = logging.getLogger(__name__)
 
@@ -84,10 +84,25 @@ def main():
             logger.warning(f"Folder {os.path.dirname(output_file_path)} does not exists. No file stored.")
 
     if plot_prices:
+        price_min = prices.min().min()
+        price_max = prices.max().max()
         logger.info("Plotting results")
-        plot = prices.plot()
+        plot = prices.plot(kind='line', line_shape='hv')
         plot.update_layout(
-            yaxis_range=[prices.min().min() - 0.1, prices.max().max() + 0.1]
+            title='Day ahead clearing price',
+            xaxis_title='',
+            yaxis_title=f'{prices.attrs["unit"]}',
+            font=dict(
+                family="Arial, sans-serif",
+                size=16,  # Increase the font size
+                color="#4d4d4d"
+            ),
+            legend_title_text='Bidding Zone',
+            # Adding a band to the prices
+            yaxis_range=[
+                min(0, price_min - abs(price_min) * 0.02),
+                price_max + abs(price_max) * 0.02
+            ]
         )
         plot.show()
 
