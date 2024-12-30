@@ -116,19 +116,6 @@ def fetch_day_ahead_prices(
 
     data_frame = pd.DataFrame()
 
-    # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
-    # EUR -> NOK exchange rates from Norges Bank
-    if convert_to_nok:
-        logger.info(
-            "Conversion to NOK/kWh requested. Fetching currency conversion rates from Norges Bank.")
-        exchange_rates = fetch_conversion_rates(start_time, end_time)
-        if exchange_rates is None or len(exchange_rates) == 0:
-            logger.warning(
-                "Problems retriving currency conversion rates from Norges Bank. Continuing using EUR/MWh.")
-            convert_to_nok = False
-        else:
-            logger.info("Currency conversion rates succesfully retrived.")
-
     entsoe_payload = {
         "securityToken": token,
         "documentType": "A44",
@@ -176,7 +163,7 @@ def fetch_day_ahead_prices(
                 # Iterate over each Period element within the current TimeSeries
                 for period in timeseries.findall('ns:Period', namespace):
                     # Extract the start time of the period
-                    start_time = period.find(
+                    start_time_period = period.find(
                         'ns:timeInterval/ns:start', namespace).text
                     # Extract the resolution of the period (e.g., PT60M for 60 minutes)
                     resolution = period.find('ns:resolution', namespace).text
@@ -192,7 +179,7 @@ def fetch_day_ahead_prices(
 
                         # Append the extracted data as a dictionary to the data list
                         data.append({
-                            'start_time': start_time,
+                            'start_time': start_time_period,
                             'resolution': resolution,
                             'position': position,
                             'price_amount': price_amount
@@ -216,40 +203,48 @@ def fetch_day_ahead_prices(
                 unit='m'
             )
 
-            # Set the timestamp as the index and create a DataSeries
-            ds_utc = pd.Series(df['price_amount'].values,
-                               index=df['timestamp'])
-            # Ok, compared to NordPool fetch_day_ahead_prices(MYTOKEN,'2023-06-28','2023-06-29')
-
-            ds_cet = ds_utc.tz_convert('Europe/Oslo')
-
-            series_name = f"{bidding_zone} [EUR/MWh]"
-            if convert_to_nok:
-                for indx, price in ds_cet.items():
-                    ds_cet[indx] = (
-                        price * exchange_rates[indx.strftime("%Y-%m-%d")] / 1000
-                    )
-                series_name = f"{bidding_zone} [NOK/kWh]"
-
+            # Set the timestamp as the index
+            df.set_index('timestamp', inplace=True)
+            # Convert the timezone and append to data_frame
+            df = df.tz_convert('Europe/Oslo')
             # Add data series for trade area to the dataframe
-            data_frame[series_name] = ds_cet
+            data_frame[f"{bidding_zone}"] = df['price_amount']
         else:
             logger.error(
                 f"Error code {response.status_code} from ENTOS-E API for bidding zone {bidding_zone}.")
             logger.info(f"API Request: {response.url}")
 
-        if len(data_frame) == 0:
+    # Check if data frame has data
+    if len(data_frame) == 0:
+        logger.warning(
+            "No prices was collected from ENTSO-E. Review the status codes from the API calls.")
+        return
+
+    # In the entos-e time series, if consecutive time steps have repeated values,
+    # only the first value is retained. Subsequent data points will have NaN values
+    # in the dataframe. Applying forward fill should correctly handle these NaN values.
+    data_frame = data_frame.ffill()
+
+    # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
+    # EUR -> NOK exchange rates from Norges Bank
+    if convert_to_nok:
+        logger.info(
+            "Conversion to NOK/kWh requested. Fetching currency conversion rates from Norges Bank.")
+        exchange_rates = fetch_conversion_rates(start_time, end_time)
+
+        if exchange_rates is None or len(exchange_rates) == 0:
             logger.warning(
-                "No prices was collected from ENTSO-E. Review the status codes from the API calls.")
-            return
+                "Problems retriving currency conversion rates from Norges Bank. Continuing using EUR/MWh.")
+            convert_to_nok = False
+        else:
+            logger.info("Currency conversion rates succesfully retrived.")
+            exchange_rates_hourly = exchange_rates.resample('h').ffill()
+            exchange_rates_hourly = exchange_rates_hourly[data_frame.index]
+            data_frame = data_frame.mul(exchange_rates_hourly, axis=0) / 1000
 
-        # In the entos-e time series, if consecutive time steps have repeated values,
-        # only the first value is retained. Subsequent data points will have NaN values
-        # in the dataframe. Applying forward fill should correctly handle these NaN values.
-        data_frame = data_frame.ffill()
-
-        # Sort columns alphabetically
-        data_frame = data_frame[sorted(data_frame.columns)]
+    data_frame.attrs['unit'] = 'EUR/MWh' if not convert_to_nok else 'NOK/kWh'
+    # Sort columns alphabetically
+    data_frame = data_frame[sorted(data_frame.columns)]
 
     return data_frame
 
@@ -342,7 +337,7 @@ def fetch_conversion_rates(start_date: str, end_date: str):
 
         # Return values as pandas series
         series = pd.Series(series_data, index=date_range)
-
+        series.index = series.index.tz_localize('Europe/Oslo')
         return series
     else:
         logger.error(f"Error code {norges_bank_response.status_code} from Norges Bank API request")
