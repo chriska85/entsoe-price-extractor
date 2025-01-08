@@ -214,6 +214,7 @@ def fetch_day_ahead_prices(
                 f"Error code {response.status_code} from ENTOS-E API for bidding zone {bidding_zone}.")
             logger.info(f"API Request: {response.url}")
 
+    logger.info("Completed ENTSO-E API requests")
     # Check if data frame has data
     if len(data_frame) == 0:
         logger.warning(
@@ -268,77 +269,108 @@ def fetch_conversion_rates(start_date: str, end_date: str):
     # Specify the API endpoints and parameters
     norges_bank_base_url = ext_api_config_obj.get_norgesbank_eur_to_nok_url()
 
+    norges_bank_payload = {"format": "sdmx-json"}
+
     # Check if start_date and end_date fall on a weekend
-    start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
-    end_datetime = datetime.strptime(end_date, "%Y-%m-%d")
+    start_datetime_query = datetime.strptime(start_date, "%Y-%m-%d")
+    end_datetime_query = datetime.strptime(end_date, "%Y-%m-%d")
 
-    if start_datetime.weekday() >= 5:
+    if end_datetime_query < start_datetime_query:
+        logger.warning(
+            f"End time ({end_datetime_query}) is set prior"
+            f"to start time ({start_datetime_query})")
+        logger.info("Returning without value.")
+        return
+
+    if start_datetime_query.weekday() >= 5:
         # Adjust start_date to the previous Friday
-        start_datetime -= timedelta(days=start_datetime.weekday() - 4)
-    if end_datetime.weekday() >= 5:
-        # Adjust end_date to the following Monday
-        end_datetime += timedelta(days=7 - end_datetime.weekday())
+        start_datetime_query -= timedelta(days=start_datetime_query.weekday() - 4)
 
-    start_date = start_datetime.strftime("%Y-%m-%d")
-    end_date = end_datetime.strftime("%Y-%m-%d")
+    max_attempts = 4
+    success = False
+    # Need to have data on the first date to aviod NaNs in the first part of the
+    # returned pandas dataframe. Try 4 requests, extending one day into the past
+    # for each try
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            start_datetime_query -= timedelta(days=1)
 
-    norges_bank_payload = {
-        "format": "sdmx-json",
-        "startPeriod": start_date,
-        "endPeriod": end_date,
-    }
+        # Updating API query parameters
+        norges_bank_payload.update({
+            "startPeriod": start_datetime_query.strftime("%Y-%m-%d"),
+            "endPeriod": start_datetime_query.strftime("%Y-%m-%d"),
+        })
 
-    # Send a GET request to Norges Bank for currency conversion
+        # Send a GET request to Norges Bank for currency conversion
+        norges_bank_response = requests.get(
+            norges_bank_base_url, params=norges_bank_payload, timeout=20
+        )
+        if norges_bank_response.status_code == 200:
+            success = True
+            break
+        else:
+            logger.warning(f"No valid exhange rates on day {start_datetime_query}. Trying one day prior.")
 
-    norges_bank_response = requests.get(
-        norges_bank_base_url, params=norges_bank_payload, timeout=20
-    )
+    if not success:
+        logger.error(f"Not possible to retrive a first date with currency data starting from {start_date}. "
+                     f"Returning None")
+        logger.info(f"Last API Request: {norges_bank_response.url}")
+        return None
 
-    # Extract the exhange rates from Norges Bank (if successful response)
+    # Found a first day with valid exchange rate data. Now querying the full period
+    start_date_query = start_datetime_query.strftime("%Y-%m-%d")
+    end_datetime_query = datetime.strptime(end_date, "%Y-%m-%d")
+    end_date_query = end_datetime_query.strftime("%Y-%m-%d")
+    # Updating API query parameters
+    norges_bank_payload.update({"startPeriod": start_date_query, "endPeriod": end_date_query})
+    # Performing request
+    norges_bank_response = requests.get(norges_bank_base_url, params=norges_bank_payload, timeout=20)
+
     if norges_bank_response.status_code == 200:
-        norges_bank_data = norges_bank_response.json()
-
-        if "data" in norges_bank_data and "dataSets" in norges_bank_data["data"]:
-            data_sets = norges_bank_data["data"]["dataSets"]
-
-            if data_sets:
-                series = data_sets[0]["series"]["0:0:0:0"]["observations"]
-                observation_values = norges_bank_data["data"]["structure"][
-                    "dimensions"
-                ]["observation"][0]["values"]
-                exchange_rate_dates = {
-                    value["id"]: value["name"] for value in observation_values
-                }
-
-                # Extract relevant exchange rates from Norges Bank response
-                exchange_rates = {}
-
-                for rate_key, rate_value in zip(
-                    exchange_rate_dates.keys(), series.values()
-                ):
-                    rate_date = exchange_rate_dates[rate_key]
-                    rate = float(rate_value[0])
-                    exchange_rates[rate_date] = rate
-
-        date_range = pd.date_range(start=start_date, end=end_date, freq="D")
-        series_data = []
-
-        # Fill in missing values (weekend days do not have observations from Norges Bank)
-        for date in date_range:
-            date_str = date.strftime("%Y-%m-%d")
-
-            if date_str in exchange_rates:
-                rate = exchange_rates[date_str]
-                series_data.append(rate)
-                previous_rate = rate
-            else:
-                if previous_rate is not None:
-                    series_data.append(previous_rate)
-
-        # Return values as pandas series
-        series = pd.Series(series_data, index=date_range)
-        series.index = series.index.tz_localize('Europe/Oslo')
-        return series
+        logger.info(f"Successfully extracted conversion rates for period {start_date_query} and {end_date_query}")
     else:
-        logger.error(f"Error code {norges_bank_response.status_code} from Norges Bank API request")
+        logger.error(f"Error code {norges_bank_response.status_code} from Norges Bank API request. Returning None")
         logger.info(f"API Request: {norges_bank_response.url}")
+        return None
+
+    # Unpacking the exhange rates from Norges Bank (if successful response)
+    norges_bank_data = norges_bank_response.json()
+    if "data" in norges_bank_data and "dataSets" in norges_bank_data["data"]:
+        data_sets = norges_bank_data["data"]["dataSets"]
+
+        if data_sets:
+            # Data points and time index are stored in different part of the response structure
+            # Extracting the currency exchange rate data:
+            currency_exchange_data = data_sets[0]["series"]["0:0:0:0"]["observations"]
+
+            # Extracting the time index:
+            exchange_rate_dates = {
+                value["id"]: value["name"] for value
+                in norges_bank_data["data"]["structure"]["dimensions"]["observation"][0]["values"]
+            }
+
+            # Storing exchange rates into a pandas series
+            exchange_rates = pd.Series(index=pd.date_range(start=start_date_query, end=end_date_query, freq="D"))
+            # Combining rates data and obeservation time stamps
+            for rate_key, rate_value in zip(
+                exchange_rate_dates.keys(), currency_exchange_data.values()
+            ):
+                rate_date = exchange_rate_dates[rate_key]
+                rate = float(rate_value[0])
+                exchange_rates[rate_date] = rate
+
+            if exchange_rates[start_date:end_date].isna().any():
+                missing_data = exchange_rates[start_date:end_date].isna()
+                missing_indexes = [date.strftime("%Y-%m-%d") for date in missing_data[missing_data].index]
+                logger.warning(f"Missing exchange rate data, using previous days instead. Indexes: {missing_indexes}")
+
+        # Use ffill to fill in missing observations with previous values
+        exchange_rates = exchange_rates.ffill()
+
+        exchange_rates.index = exchange_rates.index.tz_localize('Europe/Oslo')
+
+        # Return values only for the originally requested time period
+        return exchange_rates[start_date:end_date]
+    else:
+        logger.error("No data in Norges Bank API response (even with status code 200). Returning None")
+        return None
