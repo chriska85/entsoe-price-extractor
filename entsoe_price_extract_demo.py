@@ -32,16 +32,16 @@ prices = core_functions.fetch_day_ahead_prices(
 
 # Do analysis on results
 end_time_24h = prices.index.max()
-start_time_24h = end_time_24h - pd.Timedelta(hours=24)
+start_time_24h = end_time_24h - pd.Timedelta(hours=23)
 prices_last_24_hours = prices.loc[start_time_24h:end_time_24h]
 print(f"\nPrices on {prices.index[-1].strftime('%Y-%m-%d')}:")
 print("-" * (25 + 16 * len(prices.columns)))  # Separator line for better readability
 print("Delivey period\t\t" + "\t\t".join(prices.columns))
 print("\t\t\t" + "\t".join([f"[{prices.attrs['unit']}]"] * len(prices.columns)))
 print("-" * (25 + 16 * len(prices.columns)))  # Separator line for better readability
-for i in range(len(prices_last_24_hours) - 1):
-    start_time = prices_last_24_hours.index[i].strftime('%H:%M')
-    end_time = prices_last_24_hours.index[i + 1].strftime('%H:%M')
+for i in range(len(prices_last_24_hours)):
+    start_time = f"{prices_last_24_hours.index[i].hour:02.0f}:00"
+    end_time = f"{(prices_last_24_hours.index[i].hour + 1) % 24:02.0f}:00"
     values = "\t".join(f"{prices_last_24_hours[col].iloc[i]:8.2f}" for col in prices_last_24_hours.columns)
     print(f"{start_time} - {end_time}\t\t{values}")
 # Print min, max, and average

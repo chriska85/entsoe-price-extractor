@@ -2,9 +2,12 @@
 Utility functions for extracting prices from ENTSO-E using their Rest API
 
 This file contains the following functions:
-
-    * fetch_day_ahead_prices - fetches DA electricity prices from ENTOS-E
-    * fetch_conversion_rates - fetches EUR to NOK conversion rates fo
+    * get_valid_bidding_zones       - helper function to validate bidding zones
+    * fetch_day_ahead_prices        - Wrapper function for fetch_day_ahead_prices_api.
+                                      To get right time range, time zone and currency.
+    * fetch_day_ahead_prices_api    - fetches DA electricity prices from ENTOS-E Restful API.
+                                      Results in EUR/MWh and time zone is UTC.
+    * fetch_conversion_rates        - fetches EUR to NOK conversion rates from Norges Bank
 """
 # Standard Library Imports
 import logging
@@ -83,22 +86,24 @@ def fetch_day_ahead_prices(
         convert_to_nok: bool = False
 ):
     """
-    Fetches day-ahead electricity prices from ENTSO-E using their Restful API.
+    Wrapper function to fetches day-ahead electricity prices from ENTSO-E.
+    As the ENTSO-E API limits the time range of each request to 100 days this function
+    breaks up the request into several between start_time and end_time.
     Results in EUR/MWh by default, but can be converted to NOK/kWh using exhange rates
     from Norges Bank.
 
     Args:
         bidding_zone_list (list[str]): A list of bidding zones to query for data.
-        start_date (str): The start date in the format '%Y-%m-%d'.
-        end_date (str): The end date in the format '%Y-%m-%d'.
+        start_date (str): The start date of the interval to request data. Format '%Y-%m-%d'.
+        end_date (str): The end date  (non inclusive) of the interval to request data. Format '%Y-%m-%d'.
         token (str): The token used for authorizing requests to ENTSO-E.
         convert_to_nok (bool): A boolean controlling conversion to NOK/kWh.
 
     Returns:
-        pd.DataFrame: A Pandas DataFrame (time-indexed, "Europe/Oslo" time zone) containing
+        pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
         hourly day-ahead prices for the specified bidding zones and date range.
     """
-    # Convert start_time and end_time to UTC format expected by ENTSO-E
+
     cet_tz = pytz.timezone("Europe/Oslo")
     start_dt_cet = cet_tz.localize(datetime.strptime(start_time, "%Y-%m-%d"))
     end_dt_cet = cet_tz.localize(datetime.strptime(end_time, "%Y-%m-%d"))
@@ -109,29 +114,88 @@ def fetch_day_ahead_prices(
         logger.info("Returning without value.")
         return
 
-    end_dt_cet_request = end_dt_cet - timedelta(hours=1)
     # Convert to UTC as this is the time index used
-    start_dt_utc = start_dt_cet.astimezone(pytz.utc).strftime("%Y%m%d%H%M")
-    end_dt_utc = end_dt_cet_request.astimezone(pytz.utc).strftime("%Y%m%d%H%M")
+    start_dt_utc = start_dt_cet.astimezone(pytz.utc)
+    end_dt_utc = end_dt_cet.astimezone(pytz.utc)
+
+    full_price_df = pd.DataFrame()
+    max_interval = timedelta(days=100)
+    current_start_utc = start_dt_utc
+
+    while current_start_utc < end_dt_utc:
+        current_end_utc = min(current_start_utc + max_interval, end_dt_utc)
+        prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list, current_start_utc, current_end_utc, token)
+        full_price_df = pd.concat([full_price_df, prices_chunk])
+        current_start_utc = current_end_utc + timedelta(seconds=1)
+
+    # ENTSO-E return timeseries in UTC. Convert the index timezone to Europe/Oslo
+    full_price_df = full_price_df.tz_convert('Europe/Oslo')
+
+    # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
+    # EUR -> NOK exchange rates from Norges Bank
+    if convert_to_nok:
+        logger.info(
+            "Conversion to NOK/kWh requested. Fetching currency conversion rates from Norges Bank.")
+        exchange_rates = fetch_conversion_rates(start_time, end_time)
+
+        if exchange_rates is None or len(exchange_rates) == 0:
+            logger.warning(
+                "Problems retriving currency conversion rates from Norges Bank. Continuing using EUR/MWh.")
+            convert_to_nok = False
+        else:
+            logger.info("Currency conversion rates succesfully retrived.")
+            exchange_rates_hourly = exchange_rates.resample('h').ffill()
+            exchange_rates_hourly = exchange_rates_hourly[full_price_df.index]
+            full_price_df = full_price_df.mul(exchange_rates_hourly, axis=0) / 1000
+
+    full_price_df.attrs['unit'] = 'EUR/MWh' if not convert_to_nok else 'NOK/kWh'
+
+    return full_price_df
+
+
+def fetch_day_ahead_prices_api(
+        bidding_zone_list: list[str],
+        start_dt_utc: datetime,
+        end_dt_utc: datetime,
+        token: str,
+):
+    """
+    Fetches day-ahead electricity prices from ENTSO-E using their Restful API.
+    Results in EUR/MWh and time zone is UTC.
+
+    Args:
+        bidding_zone_list (list[str]): A list of bidding zones to query for data.
+        start_date (datetime): The start of the interval to request data, in UTC.
+        end_date (datetime): The end of the interval to request data (non inclusive), in UTC.
+        token (str): The token used for authorizing requests to ENTSO-E.
+
+    Returns:
+        pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
+        hourly day-ahead prices for the specified bidding zones and date range.
+    """
+    # Convert start_time and end_time to UTC format expected by ENTSO-E
 
     data_frame = pd.DataFrame()
+
+    start_dt_utc_str = start_dt_utc.strftime("%Y%m%d%H%M")
+    end_dt_utc_str = end_dt_utc.strftime("%Y%m%d%H%M")
 
     entsoe_payload = {
         "securityToken": token,
         "documentType": "A44",
         "in_Domain": None,
         "out_Domain": None,
-        "periodStart": start_dt_utc,
-        "periodEnd": end_dt_utc,
+        "periodStart": start_dt_utc_str,
+        "periodEnd": end_dt_utc_str,
     }
 
     ext_api_config_obj = ext_api_config.ExternalApiConfig()
     url = ext_api_config_obj.get_entsoe_web_url()
 
     logger.info("Fetching prices from ENTSO-E's Transparency Platform.")
-    logger.info(f"ENTSO-E's API url: {url}")
-    logger.info(f"Starting time: {start_dt_cet}")
-    logger.info(f"End time: {end_dt_cet}")
+    logger.debug(f"ENTSO-E's API url: {url}")
+    logger.info(f"Starting time (UTC): {start_dt_utc_str}")
+    logger.info(f"End time (UTC): {end_dt_utc_str}")
     logger.info(f"Bidding zones: {bidding_zone_list}")
 
     # ENTSO-E identifies bidding zones by so-called eic codes
@@ -205,8 +269,7 @@ def fetch_day_ahead_prices(
 
             # Set the timestamp as the index
             df.set_index('timestamp', inplace=True)
-            # Convert the timezone and append to data_frame
-            df = df.tz_convert('Europe/Oslo')
+
             # Add data series for trade area to the dataframe
             data_frame[f"{bidding_zone}"] = df['price_amount']
         else:
@@ -226,24 +289,6 @@ def fetch_day_ahead_prices(
     # in the dataframe. Applying forward fill should correctly handle these NaN values.
     data_frame = data_frame.ffill()
 
-    # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
-    # EUR -> NOK exchange rates from Norges Bank
-    if convert_to_nok:
-        logger.info(
-            "Conversion to NOK/kWh requested. Fetching currency conversion rates from Norges Bank.")
-        exchange_rates = fetch_conversion_rates(start_time, end_time)
-
-        if exchange_rates is None or len(exchange_rates) == 0:
-            logger.warning(
-                "Problems retriving currency conversion rates from Norges Bank. Continuing using EUR/MWh.")
-            convert_to_nok = False
-        else:
-            logger.info("Currency conversion rates succesfully retrived.")
-            exchange_rates_hourly = exchange_rates.resample('h').ffill()
-            exchange_rates_hourly = exchange_rates_hourly[data_frame.index]
-            data_frame = data_frame.mul(exchange_rates_hourly, axis=0) / 1000
-
-    data_frame.attrs['unit'] = 'EUR/MWh' if not convert_to_nok else 'NOK/kWh'
     # Sort columns alphabetically
     data_frame = data_frame[sorted(data_frame.columns)]
 
@@ -277,7 +322,7 @@ def fetch_conversion_rates(start_date: str, end_date: str):
 
     if end_datetime_query < start_datetime_query:
         logger.warning(
-            f"End time ({end_datetime_query}) is set prior"
+            f"End time ({end_datetime_query}) is set prior "
             f"to start time ({start_datetime_query})")
         logger.info("Returning without value.")
         return
