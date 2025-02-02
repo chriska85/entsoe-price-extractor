@@ -103,6 +103,7 @@ def fetch_day_ahead_prices(
         pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
         hourly day-ahead prices for the specified bidding zones and date range.
     """
+    ext_api_config_obj = ext_api_config.ExternalApiConfig()
 
     cet_tz = pytz.timezone("Europe/Oslo")
     start_dt_cet = cet_tz.localize(datetime.strptime(start_time, "%Y-%m-%d"))
@@ -119,7 +120,7 @@ def fetch_day_ahead_prices(
     end_dt_utc = end_dt_cet.astimezone(pytz.utc)
 
     full_price_df = pd.DataFrame()
-    max_interval = timedelta(days=100)
+    max_interval = timedelta(days=ext_api_config_obj.get_entsoe_max_days_per_request())
     current_start_utc = start_dt_utc
 
     while current_start_utc < end_dt_utc:

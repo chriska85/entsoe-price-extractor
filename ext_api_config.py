@@ -36,6 +36,8 @@ class ExternalApiConfig:
 
         self.norgesbank_eur_to_nok_url = "https://data.norges-bank.no/api/data/EXR/B.EUR.NOK.SP"
 
+        self.entsoe_max_days_per_request = 30
+
     def get_bidding_zone_to_eic_code_map(self):
         return self.bidding_zone_to_eic_code_map
 
@@ -44,6 +46,9 @@ class ExternalApiConfig:
 
     def get_entsoe_price_namespace_conf(self):
         return self.entsoe_price_ns_conf
+
+    def get_entsoe_max_days_per_request(self):
+        return self.entsoe_max_days_per_request
 
     def get_norgesbank_eur_to_nok_url(self):
         return self.norgesbank_eur_to_nok_url
