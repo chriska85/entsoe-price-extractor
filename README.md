@@ -41,11 +41,11 @@ This script extracts day-ahead electricity prices from the ENTSO-E transparency 
 ### Example Command 
 Retriving day-ahead prices for Norway's bidding zones and Germany on December 12, 2024, and plotting results.
 ```sh
-python entsoe_price_extract_cli.py -a NO1,NO2,DE -s 2024-12-12 -e 2024-12-13 -p
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -p
 ```
 Retriving day-ahead prices for Norway's bidding zones and Germany on December 12, 2024, converting to NOK/kWh, and plotting results.
 ```sh
-python entsoe_price_extract_cli.py -a NO1,NO2,DE -s 2024-12-12 -e 2024-12-13 -p -nok
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -p -nok
 ```
 Retriving day-ahead prices for Norway's bidding zones in December 2024, and storing results (current folder).
 ```sh

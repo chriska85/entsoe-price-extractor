@@ -38,8 +38,12 @@ def get_valid_bidding_zones(bidding_zone_input: list[str]):
         list[str]: A list of valid bidding zones. If no valid zones are provided,
                    an empty list is returned and a message is printed.
     """
+    # Support bidding zone input as ["BZ1,BZ2","BZ3"], in addition to reglar list
+    # Relevant for command line client which can get both comma and space separated arguments
+    bidding_zone_input_split = [bz for sublist in bidding_zone_input for bz in sublist.split(",")]
+
     # Convert the input list to a set for efficient operations
-    use_bidding_zone_set = set(bidding_zone_input)
+    use_bidding_zone_set = set(bidding_zone_input_split)
 
     # Create an instance of the ExternalApiConfig class
     ext_api_config_obj = ext_api_config.ExternalApiConfig()

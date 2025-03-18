@@ -42,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Script to extract prices from entso-e transparancy platform.")
     parser.add_argument('-a', '--bidding_zone', type=str,
-                        help='Name of bidding zones or keywords all, nordics or norway', default='norway', nargs='?')
+                        help='Name of bidding zones or keywords all, nordics or norway', default='norway', nargs='*')
     parser.add_argument('-s', '--start', type=str,
                         help='Start date. Format "yyyy-mm-dd". Example "2024-01-01".', default="2024-12-12", nargs='?')
     parser.add_argument('-e', '--end', type=str,
@@ -59,7 +59,7 @@ def main():
     plot_prices = args.plot
     start_time = args.start
     end_time = args.end
-    bidding_zone_input = args.bidding_zone.split(',')
+    bidding_zone_input = args.bidding_zone
     output_file_path = args.output
 
     bidding_zones = core_functions.get_valid_bidding_zones(bidding_zone_input)
