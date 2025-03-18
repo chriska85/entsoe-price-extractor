@@ -127,7 +127,9 @@ def fetch_day_ahead_prices(
         current_end_utc = min(current_start_utc + max_interval, end_dt_utc)
         prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list, current_start_utc, current_end_utc, token)
         full_price_df = pd.concat([full_price_df, prices_chunk])
-        current_start_utc = current_end_utc + timedelta(seconds=1)
+        # fetch_day_ahead_prices_api works with 15 minutes time steps, next start shuold be
+        # minutes after last end
+        current_start_utc = current_end_utc + timedelta(minutes=15)
 
     # ENTSO-E return timeseries in UTC. Convert the index timezone to Europe/Oslo
     full_price_df = full_price_df.tz_convert('Europe/Oslo')
@@ -159,6 +161,7 @@ def fetch_day_ahead_prices_api(
         start_dt_utc: datetime,
         end_dt_utc: datetime,
         token: str,
+        resolution: str = '60min'
 ):
     """
     Fetches day-ahead electricity prices from ENTSO-E using their Restful API.
@@ -169,14 +172,27 @@ def fetch_day_ahead_prices_api(
         start_date (datetime): The start of the interval to request data, in UTC.
         end_date (datetime): The end of the interval to request data (non inclusive), in UTC.
         token (str): The token used for authorizing requests to ENTSO-E.
+        resolution (str): Time resolution of data to return. Either hourly or quarterly. Default is '60min'.
 
     Returns:
         pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
-        hourly day-ahead prices for the specified bidding zones and date range.
+        day-ahead prices (either hourly or quarterly) for the specified bidding zones and date range.
     """
-    # Convert start_time and end_time to UTC format expected by ENTSO-E
+    # Define allowed resolutions
+    allowed_resolutions = {'15min', '15T', '15t', 'quarter-hour', 'quarter_hour', '15minutes', '15m', '15M',
+                           '60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H'}
 
-    data_frame = pd.DataFrame()
+    # Validate the resolution
+    if resolution not in allowed_resolutions:
+        raise ValueError(f"Invalid resolution '{resolution}'. "
+                         f"Allowed values are '15min' and '60min' (or their variations).")
+
+    # Create a datetime index with 15 minute intervals as this is the
+    # smallest market time unit supported in the single day ahead market clearing
+    datetime_index = pd.date_range(start=start_dt_utc, end=end_dt_utc, freq='15min', inclusive='left')
+    # Dataframe to store the prices. Timeseries from ENTSO-E are breakpoint like, meaning they are
+    # easily aggergated and filled with forward fill if needed
+    data_frame = pd.DataFrame(index=datetime_index)
 
     start_dt_utc_str = start_dt_utc.strftime("%Y%m%d%H%M")
     end_dt_utc_str = end_dt_utc.strftime("%Y%m%d%H%M")
@@ -231,7 +247,7 @@ def fetch_day_ahead_prices_api(
                     start_time_period = period.find(
                         'ns:timeInterval/ns:start', namespace).text
                     # Extract the resolution of the period (e.g., PT60M for 60 minutes)
-                    resolution = period.find('ns:resolution', namespace).text
+                    data_resolution = period.find('ns:resolution', namespace).text
 
                     # Iterate over each Point element within the current Period
                     for point in period.findall('ns:Point', namespace):
@@ -245,7 +261,7 @@ def fetch_day_ahead_prices_api(
                         # Append the extracted data as a dictionary to the data list
                         data.append({
                             'start_time': start_time_period,
-                            'resolution': resolution,
+                            'resolution': data_resolution,
                             'position': position,
                             'price_amount': price_amount
                         })
@@ -254,7 +270,12 @@ def fetch_day_ahead_prices_api(
             df = pd.DataFrame(data)
 
             # Filter data to include only PT60M resolution
-            df = df[df['resolution'] == 'PT60M']
+            if bidding_zone == 'DE':
+                # In the ENTSO-E API transparancy platform, there are two auctions available for DE
+                # The first is the 10:15 CE(S)T auction of EXAA and the second is the 12:00 CE(S)T D-1 SDAC
+                # For all practical purposes, we will use the 12:00 CE(S)T D-1 SDAC auction, which is provided with
+                # resolution PT60M (whereas the 10:15 CE(S)T auction is provided with resolution PT15M)
+                df = df[df['resolution'] == 'PT60M']
 
             # Convert start_time to datetime
             df['start_time'] = pd.to_datetime(df['start_time'])
@@ -292,6 +313,10 @@ def fetch_day_ahead_prices_api(
 
     # Sort columns alphabetically
     data_frame = data_frame[sorted(data_frame.columns)]
+
+    if resolution in ['60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H']:
+        # Resample to hourly data
+        data_frame = data_frame.resample('60min').ffill()
 
     return data_frame
 
