@@ -127,9 +127,9 @@ def fetch_day_ahead_prices(
         current_end_utc = min(current_start_utc + max_interval, end_dt_utc)
         prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list, current_start_utc, current_end_utc, token)
         full_price_df = pd.concat([full_price_df, prices_chunk])
-        # fetch_day_ahead_prices_api works with 15 minutes time steps, next start shuold be
-        # minutes after last end
-        current_start_utc = current_end_utc + timedelta(minutes=15)
+        # fetch_day_ahead_prices_api works with 15 minutes time steps,
+        # but is non-inclusive wrt end_dt_utc. Next start therefore does not have to be shifted.
+        current_start_utc = current_end_utc
 
     # ENTSO-E return timeseries in UTC. Convert the index timezone to Europe/Oslo
     full_price_df = full_price_df.tz_convert('Europe/Oslo')
