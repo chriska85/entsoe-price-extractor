@@ -32,16 +32,37 @@ This script extracts day-ahead electricity prices from the ENTSO-E transparency 
 ## Usage
 ### Command Line Arguments
 - `-a`, `--bidding_zone`: Name of bidding zones or keywords (`all`, `nordics`, `norway`, `baltics` and/or `cwe`). Default is `norway`.
-- `-s`, `--start`: Start date in the format `yyyy-mm-dd`. Example: `2024-01-01`. Default is `2024-12-12`.
-- `-e`, `--end`: End date in the format `yyyy-mm-dd`. Example: `2024-02-01`. Default is `2024-12-13`.
+- `-s`, `--start`: Start date. Optional (default: "DAY"). Format "yyyy-mm-dd" or BASE +/- RELATIVE. Examples:
+  - `"2025-03-23"`: Specific date
+  - `"2025-03"`: Specific date (first day of month)
+  - `"2025"`: Specific date (first day of year)
+  - `"DAY"`: Today.
+  - `"DAY+2D"`: Day after tomorrow.
+  - `"YEAR"`: January 1st of the current year.
+  - `"YEAR+W"`: January 8th of the current year.
+  - `"YEAR-W"`: Seven days into the previous year.
+  - `"YEAR-2Y"`: January 1st two years ago.
+- `-e`, `--end`: End date. Optional (default: "LAST_SDAC"). Format "yyyy-mm-dd" or BASE +/- RELATIVE. Examples:
+  - `"2024-01-01"`: Specific date.
+  - `"DAY"`: Today.
+  - `"DAY+2D"`: Day after tomorrow.
+  - `"YEAR"`: January 1st of the current year.
+  - `"YEAR+W"`: January 8th of the current year.
+  - `"YEAR-W"`: Seven days into the previous year.
+  - `"YEAR-2Y"`: January 1st two years ago.
+  - `"LAST_SDAC"`: Special keyword for the last Single Day-Ahead Coupling auction.
 - `-nok`, `--convert_to_nok`: Fetch EUR to NOK conversion rates and return prices as NOK/kWh (optional).
 - `-p`, `--plot`: Generate an interactive plot using the Plotly package (optional).
 - `-o`, `--output`: Path of the output file, including filename. Example: `./output/prices.csv` (optional).
 
 ### Example Command 
-Retriving day-ahead prices for Norway's bidding zones and Germany on December 12, 2024, and plotting results.
+Retriving day-ahead prices for Norway's bidding zones NO1 and NO2, and Germany for today until the wnd of the last Single Day-Ahead Couling auction, and plotting results.
 ```sh
-python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -p
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s DAY -e LAST_SDAC -p
+```
+Retriving day-ahead prices for Norway's bidding zones NO1 and NO2, and Germany from January 1st this year until the start if this month, and plotting results.
+```sh
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s YEAR -e MONTH -p
 ```
 Retriving day-ahead prices for Norway's bidding zones and Germany on December 12, 2024, converting to NOK/kWh, and plotting results.
 ```sh
@@ -49,7 +70,7 @@ python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -p 
 ```
 Retriving day-ahead prices for Norway's bidding zones in December 2024, and storing results (current folder).
 ```sh
-python entsoe_price_extract_cli.py -a norway -s 2024-12-1 -e 2024-12-31 -o ./norway_Dec_2024_DAprices_EURMWh.csv
+python entsoe_price_extract_cli.py -a norway -s 2024-12 -e 2025-01 -o ./norway_Dec_2024_DAprices_EURMWh.csv
 ```
 
 ### Notes

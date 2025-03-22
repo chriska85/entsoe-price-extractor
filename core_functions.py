@@ -22,66 +22,6 @@ import ext_api_config
 logger = logging.getLogger(__name__)
 
 
-def get_valid_bidding_zones(bidding_zone_input: list[str]):
-    """'
-    Retrieves valid bidding zones from a list of strings.
-
-    Possible inputs include valid bidding zone names as defined in the bidding_zone_to_eic_code_map
-    of ext_api_config.py. Additionally, the keywords 'nordics' and 'norway' can be used to extract
-    the Nordic and Norwegian bidding zones, respectively. The keyword 'all' can be used to retrieve
-    all valid bidding zones.
-
-    Args:
-        bidding_zone_input (list[str]): A list of bidding zones to validate.
-
-    Returns:
-        list[str]: A list of valid bidding zones. If no valid zones are provided,
-                   an empty list is returned and a message is printed.
-    """
-    # Support bidding zone input as ["BZ1,BZ2","BZ3"], in addition to reglar list
-    # Relevant for command line client which can get both comma and space separated arguments
-    bidding_zone_input_split = [bz for sublist in bidding_zone_input for bz in sublist.split(",")]
-
-    # Convert the input list to a set for efficient operations
-    use_bidding_zone_set = set(bidding_zone_input_split)
-
-    # Create an instance of the ExternalApiConfig class
-    ext_api_config_obj = ext_api_config.ExternalApiConfig()
-
-    # Define the bidding zones configuration
-    bidding_zones_config = {
-        "all": set(ext_api_config_obj.get_bidding_zone_to_eic_code_map().keys()),
-        "nordics": set(["NO1", "NO2", "NO3", "NO4", "NO5", "SE1", "SE2", "SE3", "SE4", "DK1", "DK2", "FI"]),
-        "norway": set(["NO1", "NO2", "NO3", "NO4", "NO5"]),
-        "baltics": set(["EE", "LT", "LV"]),
-        "cwe": set(["DE", "AT", "BE", "FR", "NL", "PL"])
-    }
-
-    # Include all Norwegian bidding zones if "norway" is in the input set
-    if "norway" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["norway"] | use_bidding_zone_set
-
-    # Include all Nordic bidding zones if "nordics" is in the input set
-    if "nordics" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["nordics"] | use_bidding_zone_set
-
-    # Include all bidding zones if "all" is in the input set
-    if "all" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["all"] | use_bidding_zone_set
-
-    # Ensure the final set only contains valid bidding zones
-    use_bidding_zone_set = bidding_zones_config["all"] & use_bidding_zone_set
-
-    # Check if the resulting set is empty and print a message if so
-    if len(use_bidding_zone_set) == 0:
-        logger.warning(
-            f"No valid bidding zones provided (input: {bidding_zone_input})")
-        logger.info(f"Please use at least one of the following: {bidding_zones_config['all']}")
-
-    # Return the list of valid bidding zones
-    return list(use_bidding_zone_set)
-
-
 def fetch_day_ahead_prices(
         bidding_zone_list: list[str],
         start_time: str,

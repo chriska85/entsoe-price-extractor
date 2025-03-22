@@ -11,7 +11,7 @@ import argparse
 import logging
 import pandas as pd
 from dotenv import dotenv_values
-import core_functions
+import core_functions, utils
 
 
 pd.options.plotting.backend = "plotly"
@@ -44,9 +44,9 @@ def main():
     parser.add_argument('-a', '--bidding_zone', type=str,
                         help='Name of bidding zones or keywords all, nordics or norway', default='norway', nargs='*')
     parser.add_argument('-s', '--start', type=str,
-                        help='Start date. Format "yyyy-mm-dd". Example "2024-01-01".', default="2024-12-12", nargs='?')
+                        help='Start date. Optional (default: "DAY"). Format "yyyy-mm-dd" or BASE +/- RELATVE. Example "2024-01-01", "DAY-2D", "YEAR", "WEEK-D".', default="DAY", nargs='?')
     parser.add_argument('-e', '--end', type=str,
-                        help='End date. Format "yyyy-mm-dd". Example "2024-02-01".', default="2024-12-13", nargs='?')
+                        help='End date. Optional (default: "LAST_SDAC"). Format "yyyy-mm-dd" or BASE +/- RELATVE. Example "2024-01-01", "DAY-2D", "YEAR", "WEEK-W". Also supports special "LAST_SDAC"', default="LAST_SDAC", nargs='?')
     parser.add_argument('-nok', '--convert_to_nok', action='store_true',
                         help='Fetch EUR->NOK conversion rates and return prices as NOK/kWh.')
     parser.add_argument('-p', '--plot', action='store_true',
@@ -57,23 +57,22 @@ def main():
 
     convert_to_nok = args.convert_to_nok
     plot_prices = args.plot
-    start_time = args.start
-    end_time = args.end
+    start_date, end_date = utils.convert_date_range(args.start, args.end)
     bidding_zone_input = args.bidding_zone
     output_file_path = args.output
 
-    bidding_zones = core_functions.get_valid_bidding_zones(bidding_zone_input)
+    bidding_zones = utils.get_valid_bidding_zones(bidding_zone_input)
 
     if len(bidding_zones) == 0:
-        logger.warning("No valid bidding zones fetched. Exiting.")
+        logger.error("No valid bidding zones fetched. Exiting.")
         return
 
     prices = core_functions.fetch_day_ahead_prices(
-        bidding_zones, start_time, end_time, entso_e_token, convert_to_nok=convert_to_nok
+        bidding_zones, start_date, end_date, entso_e_token, convert_to_nok=convert_to_nok
     )
 
     if prices is None:
-        logger.warning("No prices fetched. Exiting.")
+        logger.error("No prices fetched. Exiting.")
         return
 
     if len(output_file_path) > 0:
@@ -87,7 +86,14 @@ def main():
         price_min = prices.min().min()
         price_max = prices.max().max()
         logger.info("Plotting results")
-        plot = prices.plot(kind='line', line_shape='hv')
+
+        # Extend the prices DataFrame by repeating the last value for an additional hour
+        last_index = prices.index[-1]
+        new_index = last_index + pd.Timedelta(hours=1)
+        last_row = prices.iloc[-1]
+        extended_prices = pd.concat([prices, pd.DataFrame([last_row], index=[new_index])])
+
+        plot = extended_prices.plot(kind='line', line_shape='hv')
         plot.update_layout(
             title='Day ahead clearing price',
             xaxis_title='',
@@ -102,6 +108,10 @@ def main():
             yaxis_range=[
                 min(0, price_min - abs(price_min) * 0.02),
                 price_max + abs(price_max) * 0.02
+            ],
+            xaxis_range=[
+                prices.index.min(),
+                new_index
             ]
         )
         plot.show()
