@@ -53,6 +53,9 @@ def main():
                         help='Make an interactive plot using the plotly package')
     parser.add_argument('-o', '--output', type=str, default="", nargs='?',
                         help='Path of output file. Example ./output/prices.csv')
+    parser.add_argument('-t', '--time', type=str, default="SDAC_MTU", nargs='?',
+                        help='Time resolution. Valid options are "15min", "60min", "SDAC_MTU" or any other valid resolution string. Default is "SDAC_MTU".', 
+                        choices=list(utils.get_valid_time_resolution()))
     args = parser.parse_args()
 
     convert_to_nok = args.convert_to_nok
@@ -60,6 +63,7 @@ def main():
     start_date, end_date = utils.convert_date_range(args.start, args.end)
     bidding_zone_input = args.bidding_zone
     output_file_path = args.output
+    resolution = args.time
 
     bidding_zones = utils.get_valid_bidding_zones(bidding_zone_input)
 
@@ -68,7 +72,12 @@ def main():
         return
 
     prices = core_functions.fetch_day_ahead_prices(
-        bidding_zones, start_date, end_date, entso_e_token, convert_to_nok=convert_to_nok
+        bidding_zones, 
+        start_date, 
+        end_date, 
+        entso_e_token, 
+        resolution=resolution, 
+        convert_to_nok=convert_to_nok
     )
 
     if prices is None:

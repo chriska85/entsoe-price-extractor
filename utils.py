@@ -6,6 +6,26 @@ import ext_api_config
 
 
 logger = logging.getLogger(__name__)
+        
+def get_sdac_15mtu_changeover_timestr() -> str:
+    # The SDAC auction changed from 15 minute MTU to 60 minute MTU on 2023-10-31
+    sdac_15mtu_changeover_timestr = "2025-09-30T22:00Z"
+    return sdac_15mtu_changeover_timestr  # 2023-10-31 at 23:00 CET
+
+def get_valid_time_resolution(resolution_type: str='all') -> set:
+
+    resolutions_15min = {'15min', '15T', '15t', 'quarter-hour', 'quarter_hour', '15minutes', '15m', '15M'}
+    resolutions_60min = {'60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H'}
+    resolutions_special = {'SDAC_MTU'}
+
+
+    if resolution_type == "quarter":
+        return resolutions_15min
+    
+    if resolution_type == "hour":
+        return resolutions_60min
+    
+    return resolutions_15min.union(resolutions_60min).union(resolutions_special)
 
 def get_valid_bidding_zones(bidding_zone_input: list[str]):
     """'

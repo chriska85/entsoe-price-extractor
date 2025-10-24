@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 #start_time = "2024-12-12"
 #end_time = "2024-12-13"
 start_time = "DAY"
-end_time = "DAY+D"
+end_time = "LAST_SDAC" #"DAY+D"
+resolution='SDAC_MTU'  # Valid options are '15min', '60min', 'SDAC_MTU' 
 
 start_date, end_date = utils.convert_date_range(start_time, end_time)
 
-bidding_zones = ["DE","NO2"]
+bidding_zones = ["NO2","DE"]  
 convert_to_nok = False
 
 # Validate the bidding zone list (not strictly nessecary)
@@ -33,7 +34,7 @@ bidding_zones_valid = utils.get_valid_bidding_zones(bidding_zones)
 
 # Run the fetch_day_ahead_prices method and store results in the pandas dataframe prices
 prices = core_functions.fetch_day_ahead_prices(
-    bidding_zones, start_time, end_time, entso_e_token, convert_to_nok=convert_to_nok
+    bidding_zones, start_date, end_date, entso_e_token, convert_to_nok=convert_to_nok,resolution=resolution 
 )
 
 # Do analysis on results

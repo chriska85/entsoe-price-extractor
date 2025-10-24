@@ -17,6 +17,7 @@ import requests
 import pandas as pd
 import pytz
 import ext_api_config
+import utils
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def fetch_day_ahead_prices(
         start_time: str,
         end_time: str,
         token: str,
+        resolution: str = 'SDAC_MTU',
         convert_to_nok: bool = False
 ):
     """
@@ -41,6 +43,7 @@ def fetch_day_ahead_prices(
         start_date (str): The start date of the interval to request data. Format '%Y-%m-%d'.
         end_date (str): The end date  (non inclusive) of the interval to request data. Format '%Y-%m-%d'.
         token (str): The token used for authorizing requests to ENTSO-E.
+        resolution (str): Time resolution of data to return. Either hourly, quarterly or SDAC_MTU (defualt).
         convert_to_nok (bool): A boolean controlling conversion to NOK/kWh.
 
     Returns:
@@ -69,7 +72,11 @@ def fetch_day_ahead_prices(
 
     while current_start_utc < end_dt_utc:
         current_end_utc = min(current_start_utc + max_interval, end_dt_utc)
-        prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list, current_start_utc, current_end_utc, token)
+        prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list,
+                                                  current_start_utc,
+                                                  current_end_utc,
+                                                  token,
+                                                  resolution)
         full_price_df = pd.concat([full_price_df, prices_chunk])
         # fetch_day_ahead_prices_api works with 15 minutes time steps,
         # but is non-inclusive wrt end_dt_utc. Next start therefore does not have to be shifted.
@@ -105,7 +112,7 @@ def fetch_day_ahead_prices_api(
         start_dt_utc: datetime,
         end_dt_utc: datetime,
         token: str,
-        resolution: str = '60min'
+        resolution: str = 'SDAC_MTU'
 ):
     """
     Fetches day-ahead electricity prices from ENTSO-E using their Restful API.
@@ -116,15 +123,14 @@ def fetch_day_ahead_prices_api(
         start_date (datetime): The start of the interval to request data, in UTC.
         end_date (datetime): The end of the interval to request data (non inclusive), in UTC.
         token (str): The token used for authorizing requests to ENTSO-E.
-        resolution (str): Time resolution of data to return. Either hourly or quarterly. Default is '60min'.
+        resolution (str): Time resolution of data to return. Either hourly or quarterly. Default is 'SDAC_MTU'.
 
     Returns:
         pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
         day-ahead prices (either hourly or quarterly) for the specified bidding zones and date range.
     """
     # Define allowed resolutions
-    allowed_resolutions = {'15min', '15T', '15t', 'quarter-hour', 'quarter_hour', '15minutes', '15m', '15M',
-                           '60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H'}
+    allowed_resolutions = utils.get_valid_time_resolution("all")
 
     # Validate the resolution
     if resolution not in allowed_resolutions:
@@ -213,16 +219,25 @@ def fetch_day_ahead_prices_api(
             # Create a DataFrame from the list of dictionaries
             df = pd.DataFrame(data)
 
+            # Convert start_time to datetime
+            df['start_time'] = pd.to_datetime(df['start_time'])
+
+            # Get the changeover time for SDAC from 15 minute MTU to 60 minute MTU
+            sdac_15mtu_changeover_timestr = utils.get_sdac_15mtu_changeover_timestr()
+            sdac_15mtu_changeover_dt = pd.to_datetime(sdac_15mtu_changeover_timestr)
+
             # Filter data to include only PT60M resolution
             if bidding_zone == 'DE':
+                # Pre changeover to 15min MTU in SDAC:
                 # In the ENTSO-E API transparancy platform, there are two auctions available for DE
                 # The first is the 10:15 CE(S)T auction of EXAA and the second is the 12:00 CE(S)T D-1 SDAC
                 # For all practical purposes, we will use the 12:00 CE(S)T D-1 SDAC auction, which is provided with
                 # resolution PT60M (whereas the 10:15 CE(S)T auction is provided with resolution PT15M)
-                df = df[df['resolution'] == 'PT60M']
 
-            # Convert start_time to datetime
-            df['start_time'] = pd.to_datetime(df['start_time'])
+                df = df[
+                    (df['start_time'] < sdac_15mtu_changeover_dt) & (df['resolution'] == 'PT60M')
+                    (df['start_time'] >= sdac_15mtu_changeover_dt)
+                ]
 
             # Calculate the timestamp for each data point using the resolution and position
             # Extract the number of minutes from the resolution string (e.g., 'PT60M' -> 60)
@@ -258,9 +273,23 @@ def fetch_day_ahead_prices_api(
     # Sort columns alphabetically
     data_frame = data_frame[sorted(data_frame.columns)]
 
-    if resolution in ['60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H']:
+    if resolution not in utils.get_valid_time_resolution("quarter"):
         # Resample to hourly data
-        data_frame = data_frame.resample('60min').ffill()
+
+        # Split the DataFrame based on the SDAC 15min MTU changeover date
+        df_pre_sdac_15mtu_changeover = data_frame[data_frame.index < sdac_15mtu_changeover_dt]
+        df_post_sdac_15mtu_changeover = data_frame[data_frame.index >= sdac_15mtu_changeover_dt]
+
+        # Resample each part separately
+        # Pre changeover data is in 15 minute MTU, so we can use forward fill as the data is in 60min resolution
+        df_pre_sdac_15mtu_changeover = df_pre_sdac_15mtu_changeover.resample('60min').ffill()
+
+        if resolution in utils.get_valid_time_resolution("hour"):
+            # Post changeover data is in 60 minute MTU, so we can use mean as the data is in 15min resolution
+            df_post_sdac_15mtu_changeover = df_post_sdac_15mtu_changeover.resample('60min').agg('mean')
+
+        # Combine the two parts back together
+        data_frame = pd.concat([df_pre_sdac_15mtu_changeover, df_post_sdac_15mtu_changeover])
 
     return data_frame
 
