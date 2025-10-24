@@ -3,58 +3,57 @@ Utility functions for extracting prices from ENTSO-E using their Rest API
 
 This file contains the following functions:
     * get_valid_bidding_zones       - helper function to validate bidding zones
-    * fetch_day_ahead_prices        - Wrapper function for fetch_day_ahead_prices_api.
-                                      To get right time range, time zone and currency.
-    * fetch_day_ahead_prices_api    - fetches DA electricity prices from ENTOS-E Restful API.
-                                      Results in EUR/MWh and time zone is UTC.
+    * fetch_day_ahead_prices        - Wrapper function for EntsoePandasClient's query_day_ahead_prices.
+                                      To get multiple bidding zones and convert currency if requested.
     * fetch_conversion_rates        - fetches EUR to NOK conversion rates from Norges Bank
 """
 # Standard Library Imports
 import logging
-import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
-import requests
+# Imports for fetching data from ENTSO-E
+from entsoe import EntsoePandasClient
 import pandas as pd
-import pytz
-import ext_api_config
-import utils
-
+# Imports for fetching data from Norges Bank
+import requests
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
-
 
 def fetch_day_ahead_prices(
         bidding_zone_list: list[str],
         start_time: str,
         end_time: str,
         token: str,
-        resolution: str = 'SDAC_MTU',
-        convert_to_nok: bool = False
+        convert_to_nok: bool = False,
+        resolution: str = "SDAC_MTU",
 ):
     """
     Wrapper function to fetches day-ahead electricity prices from ENTSO-E.
-    As the ENTSO-E API limits the time range of each request to 100 days this function
-    breaks up the request into several between start_time and end_time.
+    Uses the entsoe-py library to fetch data from ENTSO-E's Restful API.
     Results in EUR/MWh by default, but can be converted to NOK/kWh using exhange rates
     from Norges Bank.
 
     Args:
-        bidding_zone_list (list[str]): A list of bidding zones to query for data.
-        start_date (str): The start date of the interval to request data. Format '%Y-%m-%d'.
-        end_date (str): The end date  (non inclusive) of the interval to request data. Format '%Y-%m-%d'.
-        token (str): The token used for authorizing requests to ENTSO-E.
-        resolution (str): Time resolution of data to return. Either hourly, quarterly or SDAC_MTU (defualt).
-        convert_to_nok (bool): A boolean controlling conversion to NOK/kWh.
+        bidding_zone_list (list[str]): 
+            A list of bidding zones to query for data. 
+            Needs to correspond to the list of valid bidding zones in entsoe-py/entsoe/mappings.py
+        start_date (str): 
+            The start date of the interval to request data. 
+        end_date (str): 
+            The end date  (non inclusive) of the interval to request data. 
+        token (str): 
+            The token used for authorizing requests to ENTSO-E.
+        convert_to_nok (bool): 
+            A boolean controlling conversion to NOK/kWh.
 
     Returns:
-        pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
+        pd.DataFrame: A Pandas DataFrame (time-indexed, "Europe/Oslo" time zone) containing
         hourly day-ahead prices for the specified bidding zones and date range.
     """
-    ext_api_config_obj = ext_api_config.ExternalApiConfig()
 
-    cet_tz = pytz.timezone("Europe/Oslo")
-    start_dt_cet = cet_tz.localize(datetime.strptime(start_time, "%Y-%m-%d"))
-    end_dt_cet = cet_tz.localize(datetime.strptime(end_time, "%Y-%m-%d"))
+    client = EntsoePandasClient(api_key=token)
+
+    start_dt_cet = pd.Timestamp(start_time, tz="Europe/Oslo")
+    end_dt_cet   = pd.Timestamp(end_time, tz="Europe/Oslo")
 
     if end_dt_cet < start_dt_cet:
         logger.warning(
@@ -62,28 +61,23 @@ def fetch_day_ahead_prices(
         logger.info("Returning without value.")
         return
 
-    # Convert to UTC as this is the time index used
-    start_dt_utc = start_dt_cet.astimezone(pytz.utc)
-    end_dt_utc = end_dt_cet.astimezone(pytz.utc)
+    datetime_index = pd.date_range(start=start_dt_cet, end=end_dt_cet, freq='15min', inclusive='left')
+    # Dataframe to store the prices. Timeseries from ENTSO-E are breakpoint like, meaning they are
+    # easily aggergated and filled with forward fill if needed
+    full_price_df = pd.DataFrame(index=datetime_index)
 
-    full_price_df = pd.DataFrame()
-    max_interval = timedelta(days=ext_api_config_obj.get_entsoe_max_days_per_request())
-    current_start_utc = start_dt_utc
+    for bidding_zone in bidding_zone_list:
+        entsoe_py_df = client.query_day_ahead_prices(bidding_zone, start=start_dt_cet, end=end_dt_cet)
+        full_price_df[f"{bidding_zone}"] = entsoe_py_df
 
-    while current_start_utc < end_dt_utc:
-        current_end_utc = min(current_start_utc + max_interval, end_dt_utc)
-        prices_chunk = fetch_day_ahead_prices_api(bidding_zone_list,
-                                                  current_start_utc,
-                                                  current_end_utc,
-                                                  token,
-                                                  resolution)
-        full_price_df = pd.concat([full_price_df, prices_chunk])
-        # fetch_day_ahead_prices_api works with 15 minutes time steps,
-        # but is non-inclusive wrt end_dt_utc. Next start therefore does not have to be shifted.
-        current_start_utc = current_end_utc
+    if resolution != "SDAC_MTU":
+        full_price_df = full_price_df.ffill()
+        logger.info(f"Resampling prices to resolution {resolution}")
+        if resolution == "60min":
+            full_price_df = full_price_df.resample('h').mean()
+        else:
+            logger.warning(f"Resolution {resolution} not supported. Continuing with SDAC_MTU")
 
-    # ENTSO-E return timeseries in UTC. Convert the index timezone to Europe/Oslo
-    full_price_df = full_price_df.tz_convert('Europe/Oslo')
 
     # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
     # EUR -> NOK exchange rates from Norges Bank
@@ -98,201 +92,12 @@ def fetch_day_ahead_prices(
             convert_to_nok = False
         else:
             logger.info("Currency conversion rates succesfully retrived.")
-            exchange_rates_hourly = exchange_rates.resample('h').ffill()
-            exchange_rates_hourly = exchange_rates_hourly[full_price_df.index]
-            full_price_df = full_price_df.mul(exchange_rates_hourly, axis=0) / 1000
+            exchange_rates_sdac_mtu = exchange_rates.reindex(full_price_df.index, method='ffill')
+            full_price_df = full_price_df.mul(exchange_rates_sdac_mtu, axis=0) / 1000
 
     full_price_df.attrs['unit'] = 'EUR/MWh' if not convert_to_nok else 'NOK/kWh'
 
     return full_price_df
-
-
-def fetch_day_ahead_prices_api(
-        bidding_zone_list: list[str],
-        start_dt_utc: datetime,
-        end_dt_utc: datetime,
-        token: str,
-        resolution: str = 'SDAC_MTU'
-):
-    """
-    Fetches day-ahead electricity prices from ENTSO-E using their Restful API.
-    Results in EUR/MWh and time zone is UTC.
-
-    Args:
-        bidding_zone_list (list[str]): A list of bidding zones to query for data.
-        start_date (datetime): The start of the interval to request data, in UTC.
-        end_date (datetime): The end of the interval to request data (non inclusive), in UTC.
-        token (str): The token used for authorizing requests to ENTSO-E.
-        resolution (str): Time resolution of data to return. Either hourly or quarterly. Default is 'SDAC_MTU'.
-
-    Returns:
-        pd.DataFrame: A Pandas DataFrame (time-indexed, "UTC" time zone) containing
-        day-ahead prices (either hourly or quarterly) for the specified bidding zones and date range.
-    """
-    # Define allowed resolutions
-    allowed_resolutions = utils.get_valid_time_resolution("all")
-
-    # Validate the resolution
-    if resolution not in allowed_resolutions:
-        raise ValueError(f"Invalid resolution '{resolution}'. "
-                         f"Allowed values are '15min' and '60min' (or their variations).")
-
-    # Create a datetime index with 15 minute intervals as this is the
-    # smallest market time unit supported in the single day ahead market clearing
-    datetime_index = pd.date_range(start=start_dt_utc, end=end_dt_utc, freq='15min', inclusive='left')
-    # Dataframe to store the prices. Timeseries from ENTSO-E are breakpoint like, meaning they are
-    # easily aggergated and filled with forward fill if needed
-    data_frame = pd.DataFrame(index=datetime_index)
-
-    start_dt_utc_str = start_dt_utc.strftime("%Y%m%d%H%M")
-    end_dt_utc_str = end_dt_utc.strftime("%Y%m%d%H%M")
-
-    entsoe_payload = {
-        "securityToken": token,
-        "documentType": "A44",
-        "in_Domain": None,
-        "out_Domain": None,
-        "periodStart": start_dt_utc_str,
-        "periodEnd": end_dt_utc_str,
-    }
-
-    ext_api_config_obj = ext_api_config.ExternalApiConfig()
-    url = ext_api_config_obj.get_entsoe_web_url()
-
-    logger.info("Fetching prices from ENTSO-E's Transparency Platform.")
-    logger.debug(f"ENTSO-E's API url: {url}")
-    logger.info(f"Starting time (UTC): {start_dt_utc_str}")
-    logger.info(f"End time (UTC): {end_dt_utc_str}")
-    logger.info(f"Bidding zones: {bidding_zone_list}")
-
-    # ENTSO-E identifies bidding zones by so-called eic codes
-    # The map between bidding zone and EIC codes are maintained in ext_api_confit.py
-    bidding_zone_to_eic_code_dict = ext_api_config_obj.get_bidding_zone_to_eic_code_map()
-
-    for bidding_zone in bidding_zone_list:
-        # Set the bidding zone in the ENTSO-E api payload
-        # (both in_Domain and out_Domain needed)
-        entsoe_payload["in_Domain"] = bidding_zone_to_eic_code_dict[bidding_zone]
-        entsoe_payload["out_Domain"] = bidding_zone_to_eic_code_dict[bidding_zone]
-        # Request data from ENTSO-E
-        response = requests.get(url, params=entsoe_payload, timeout=180)
-
-        if response.status_code == 200:
-            xml_data = response.content
-
-            # Define the namespace prefix and URI
-            namespace = ext_api_config_obj.get_entsoe_price_namespace_conf()
-
-            # Parse the XML data
-            root = ET.fromstring(xml_data)
-
-            # Initialize an empty list to store the extracted data
-            data = []
-
-            # Iterate over each TimeSeries element in the XML
-            for timeseries in root.findall('ns:TimeSeries', namespace):
-                # Iterate over each Period element within the current TimeSeries
-                for period in timeseries.findall('ns:Period', namespace):
-                    # Extract the start time of the period
-                    start_time_period = period.find(
-                        'ns:timeInterval/ns:start', namespace).text
-                    # Extract the resolution of the period (e.g., PT60M for 60 minutes)
-                    data_resolution = period.find('ns:resolution', namespace).text
-
-                    # Iterate over each Point element within the current Period
-                    for point in period.findall('ns:Point', namespace):
-                        # Extract the position of the point (e.g., 1, 2, 3, ...)
-                        position = int(point.find(
-                            'ns:position', namespace).text)
-                        # Extract the price amount at the current point
-                        price_amount = float(point.find(
-                            'ns:price.amount', namespace).text)
-
-                        # Append the extracted data as a dictionary to the data list
-                        data.append({
-                            'start_time': start_time_period,
-                            'resolution': data_resolution,
-                            'position': position,
-                            'price_amount': price_amount
-                        })
-
-            # Create a DataFrame from the list of dictionaries
-            df = pd.DataFrame(data)
-
-            # Convert start_time to datetime
-            df['start_time'] = pd.to_datetime(df['start_time'])
-
-            # Get the changeover time for SDAC from 15 minute MTU to 60 minute MTU
-            sdac_15mtu_changeover_timestr = utils.get_sdac_15mtu_changeover_timestr()
-            sdac_15mtu_changeover_dt = pd.to_datetime(sdac_15mtu_changeover_timestr)
-
-            # Filter data to include only PT60M resolution
-            if bidding_zone == 'DE':
-                # Pre changeover to 15min MTU in SDAC:
-                # In the ENTSO-E API transparancy platform, there are two auctions available for DE
-                # The first is the 10:15 CE(S)T auction of EXAA and the second is the 12:00 CE(S)T D-1 SDAC
-                # For all practical purposes, we will use the 12:00 CE(S)T D-1 SDAC auction, which is provided with
-                # resolution PT60M (whereas the 10:15 CE(S)T auction is provided with resolution PT15M)
-
-                df = df[
-                    (df['start_time'] < sdac_15mtu_changeover_dt) & (df['resolution'] == 'PT60M')
-                    (df['start_time'] >= sdac_15mtu_changeover_dt)
-                ]
-
-            # Calculate the timestamp for each data point using the resolution and position
-            # Extract the number of minutes from the resolution string (e.g., 'PT60M' -> 60)
-            # Multiply the position (adjusted by -1) by the extracted minutes to get the total
-            # offset in minutes. Add this offset to the start_time to get the final timestamp
-            df['timestamp'] = df['start_time'] + pd.to_timedelta(
-                (df['position'] - 1) * df['resolution'].str.extract(r'(\d+)').astype(int)[0],
-                unit='m'
-            )
-
-            # Set the timestamp as the index
-            df.set_index('timestamp', inplace=True)
-
-            # Add data series for trade area to the dataframe
-            data_frame[f"{bidding_zone}"] = df['price_amount']
-        else:
-            logger.error(
-                f"Error code {response.status_code} from ENTOS-E API for bidding zone {bidding_zone}.")
-            logger.info(f"API Request: {response.url}")
-
-    logger.info("Completed ENTSO-E API requests")
-    # Check if data frame has data
-    if len(data_frame) == 0:
-        logger.warning(
-            "No prices was collected from ENTSO-E. Review the status codes from the API calls.")
-        return
-
-    # In the entos-e time series, if consecutive time steps have repeated values,
-    # only the first value is retained. Subsequent data points will have NaN values
-    # in the dataframe. Applying forward fill should correctly handle these NaN values.
-    data_frame = data_frame.ffill()
-
-    # Sort columns alphabetically
-    data_frame = data_frame[sorted(data_frame.columns)]
-
-    if resolution not in utils.get_valid_time_resolution("quarter"):
-        # Resample to hourly data
-
-        # Split the DataFrame based on the SDAC 15min MTU changeover date
-        df_pre_sdac_15mtu_changeover = data_frame[data_frame.index < sdac_15mtu_changeover_dt]
-        df_post_sdac_15mtu_changeover = data_frame[data_frame.index >= sdac_15mtu_changeover_dt]
-
-        # Resample each part separately
-        # Pre changeover data is in 15 minute MTU, so we can use forward fill as the data is in 60min resolution
-        df_pre_sdac_15mtu_changeover = df_pre_sdac_15mtu_changeover.resample('60min').ffill()
-
-        if resolution in utils.get_valid_time_resolution("hour"):
-            # Post changeover data is in 60 minute MTU, so we can use mean as the data is in 15min resolution
-            df_post_sdac_15mtu_changeover = df_post_sdac_15mtu_changeover.resample('60min').agg('mean')
-
-        # Combine the two parts back together
-        data_frame = pd.concat([df_pre_sdac_15mtu_changeover, df_post_sdac_15mtu_changeover])
-
-    return data_frame
-
 
 def fetch_conversion_rates(start_date: str, end_date: str):
     """
@@ -309,10 +114,9 @@ def fetch_conversion_rates(start_date: str, end_date: str):
                 returned series. If the end_date falls on a weekend, the following Monday is
                 included in the returned series.
     """
-    ext_api_config_obj = ext_api_config.ExternalApiConfig()
-    # Specify the API endpoints and parameters
-    norges_bank_base_url = ext_api_config_obj.get_norgesbank_eur_to_nok_url()
 
+    # Specify the API endpoints and parameters
+    norges_bank_base_url = "https://data.norges-bank.no/api/data/EXR/B.EUR.NOK.SP"
     norges_bank_payload = {"format": "sdmx-json"}
 
     # Check if start_date and end_date fall on a weekend

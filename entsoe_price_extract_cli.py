@@ -14,6 +14,8 @@ from dotenv import dotenv_values
 import core_functions, utils
 
 
+PLOTLY_SOCKET_SAFE = True
+
 pd.options.plotting.backend = "plotly"
 
 # Load the environmental variables from the .env file
@@ -53,9 +55,6 @@ def main():
                         help='Make an interactive plot using the plotly package')
     parser.add_argument('-o', '--output', type=str, default="", nargs='?',
                         help='Path of output file. Example ./output/prices.csv')
-    parser.add_argument('-t', '--time', type=str, default="SDAC_MTU", nargs='?',
-                        help='Time resolution. Valid options are "15min", "60min", "SDAC_MTU" or any other valid resolution string. Default is "SDAC_MTU".', 
-                        choices=list(utils.get_valid_time_resolution()))
     args = parser.parse_args()
 
     convert_to_nok = args.convert_to_nok
@@ -63,7 +62,6 @@ def main():
     start_date, end_date = utils.convert_date_range(args.start, args.end)
     bidding_zone_input = args.bidding_zone
     output_file_path = args.output
-    resolution = args.time
 
     bidding_zones = utils.get_valid_bidding_zones(bidding_zone_input)
 
@@ -76,7 +74,6 @@ def main():
         start_date, 
         end_date, 
         entso_e_token, 
-        resolution=resolution, 
         convert_to_nok=convert_to_nok
     )
 
@@ -98,9 +95,15 @@ def main():
 
         # Extend the prices DataFrame by repeating the last value for an additional hour
         last_index = prices.index[-1]
-        new_index = last_index + pd.Timedelta(hours=1)
+        second_last_index = prices.index[-2]
+        time_step = last_index - second_last_index
+
+        # Extend by one time step
+        new_index = last_index + time_step
+
         last_row = prices.iloc[-1]
         extended_prices = pd.concat([prices, pd.DataFrame([last_row], index=[new_index])])
+        extended_prices = extended_prices.ffill()
 
         plot = extended_prices.plot(kind='line', line_shape='hv')
         plot.update_layout(
@@ -123,7 +126,11 @@ def main():
                 new_index
             ]
         )
-        plot.show()
+        if PLOTLY_SOCKET_SAFE:
+            logger.info("Plot saved to day_ahead_prices.html")
+            plot.write_html("day_ahead_prices.html", auto_open=True)
+        else:
+            plot.show()
 
 
 if __name__ == "__main__":

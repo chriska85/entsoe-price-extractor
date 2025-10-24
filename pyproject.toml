@@ -10,5 +10,7 @@ name = "entsoe-price-extractor"
     "pandas",
     "requests",
     "python-dotenv",
-    "plotly"
+    "plotly",
+    "entsoe-py",
+    "uv"
 ]

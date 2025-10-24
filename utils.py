@@ -2,31 +2,9 @@ from datetime import datetime, timedelta
 import re
 import logging
 import pytz
-import ext_api_config
-
 
 logger = logging.getLogger(__name__)
         
-def get_sdac_15mtu_changeover_timestr() -> str:
-    # The SDAC auction changed from 15 minute MTU to 60 minute MTU on 2023-10-31
-    sdac_15mtu_changeover_timestr = "2025-09-30T22:00Z"
-    return sdac_15mtu_changeover_timestr  # 2023-10-31 at 23:00 CET
-
-def get_valid_time_resolution(resolution_type: str='all') -> set:
-
-    resolutions_15min = {'15min', '15T', '15t', 'quarter-hour', 'quarter_hour', '15minutes', '15m', '15M'}
-    resolutions_60min = {'60min', '60T', '60t', 'hour', '1H', '1h', '1hour', '1HOUR', 'h', 'H'}
-    resolutions_special = {'SDAC_MTU'}
-
-
-    if resolution_type == "quarter":
-        return resolutions_15min
-    
-    if resolution_type == "hour":
-        return resolutions_60min
-    
-    return resolutions_15min.union(resolutions_60min).union(resolutions_special)
-
 def get_valid_bidding_zones(bidding_zone_input: list[str]):
     """'
     Retrieves valid bidding zones from a list of strings.
@@ -43,39 +21,39 @@ def get_valid_bidding_zones(bidding_zone_input: list[str]):
         list[str]: A list of valid bidding zones. If no valid zones are provided,
                    an empty list is returned and a message is printed.
     """
-    # Support bidding zone input as ["BZ1,BZ2","BZ3"], in addition to reglar list
-    # Relevant for command line client which can get both comma and space separated arguments
+    # Support bidding zone input as ["BZ1,BZ2","BZ3"], in addition to regular list
     bidding_zone_input_split = [bz for sublist in bidding_zone_input for bz in sublist.split(",")]
-
-    # Convert the input list to a set for efficient operations
     use_bidding_zone_set = set(bidding_zone_input_split)
-
-    # Create an instance of the ExternalApiConfig class
-    ext_api_config_obj = ext_api_config.ExternalApiConfig()
 
     # Define the bidding zones configuration
     bidding_zones_config = {
-        "all": set(ext_api_config_obj.get_bidding_zone_to_eic_code_map().keys()),
-        "nordics": set(["NO1", "NO2", "NO3", "NO4", "NO5", "SE1", "SE2", "SE3", "SE4", "DK1", "DK2", "FI"]),
-        "norway": set(["NO1", "NO2", "NO3", "NO4", "NO5"]),
-        "baltics": set(["EE", "LT", "LV"]),
-        "cwe": set(["DE", "AT", "BE", "FR", "NL", "PL"])
+        "norway": {"NO_1", "NO_2", "NO_3", "NO_4", "NO_5"},
+        "denmark": {"DK_1", "DK_2"},
+        "sweden": {"SE_1", "SE_2", "SE_3", "SE_4"},
+        "nordics": {"NO_1", "NO_2", "NO_3", "NO_4", "NO_5", "DK_1", "DK_2", "SE_1", "SE_2", "SE_3", "SE_4", "FI"},
+        "baltics": {"EE", "LT", "LV"},
+        "DE": {"DE_LU"},
+        "cwe": {"DE_LU", "AT", "BE", "FR", "NL", "PL"},
+        "nsl": {"NO_2_NSL"},
     }
+    bidding_zones_config["all"] = set().union(*bidding_zones_config.values())
 
-    # Include all Norwegian bidding zones if "norway" is in the input set
-    if "norway" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["norway"] | use_bidding_zone_set
+    # Add support for shorthand inputs like "NO2", "DK1", "SE3" and plain "DE" -> "DE_LU"
+    use_bidding_zone_set.update({
+        f"{m.group(1)}_{int(m.group(2))}" 
+        for bz in {bz.strip().upper() for bz in use_bidding_zone_set} 
+        if (m := re.match(r'^(NO|DK|SE)(\d+)$', bz))
+    })
+    if 'DE' in use_bidding_zone_set:
+        use_bidding_zone_set.add('DE_LU')
 
-    # Include all Nordic bidding zones if "nordics" is in the input set
-    if "nordics" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["nordics"] | use_bidding_zone_set
-
-    # Include all bidding zones if "all" is in the input set
-    if "all" in use_bidding_zone_set:
-        use_bidding_zone_set = bidding_zones_config["all"] | use_bidding_zone_set
+    # Include all relevant bidding zones based on input
+    for key in ["norway", "nordics", "DE", "cwe", "all"]:
+        if key in use_bidding_zone_set:
+            use_bidding_zone_set.update(bidding_zones_config[key])
 
     # Ensure the final set only contains valid bidding zones
-    use_bidding_zone_set = bidding_zones_config["all"] & use_bidding_zone_set
+    use_bidding_zone_set &= bidding_zones_config["all"]
 
     # Check if the resulting set is empty and print a message if so
     if len(use_bidding_zone_set) == 0:
@@ -83,8 +61,10 @@ def get_valid_bidding_zones(bidding_zone_input: list[str]):
             f"No valid bidding zones provided (input: {bidding_zone_input})")
         logger.info(f"Please use at least one of the following: {bidding_zones_config['all']}")
 
-    # Return the list of valid bidding zones
-    return list(use_bidding_zone_set)
+    # Return the list of (sorted) valid bidding zones
+    use_bidding_zone_list = list(use_bidding_zone_set)
+    use_bidding_zone_list.sort()
+    return use_bidding_zone_list
 
 
 def parse_date_reference(reference):

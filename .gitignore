@@ -4,6 +4,7 @@ venv
 output/
 my_*.py
 *.csv
+day_ahead_prices.html
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
