@@ -11,7 +11,8 @@ import argparse
 import logging
 import pandas as pd
 from dotenv import dotenv_values
-import core_functions, utils
+import core_functions
+import utils
 
 
 PLOTLY_SOCKET_SAFE = True
@@ -53,8 +54,10 @@ def main():
                         help='Fetch EUR->NOK conversion rates and return prices as NOK/kWh.')
     parser.add_argument('-p', '--plot', action='store_true',
                         help='Make an interactive plot using the plotly package')
-    parser.add_argument('-o', '--output', type=str, default="", nargs='?',
+    parser.add_argument('-o', '--output', type=str, default="",
                         help='Path of output file. Example ./output/prices.csv')
+    parser.add_argument('-r', '--resolution', type=str, default="SDAC_MTU",
+                        help='Resolution of the prices. Example "15min" or "60min".')
     args = parser.parse_args()
 
     convert_to_nok = args.convert_to_nok
@@ -62,6 +65,7 @@ def main():
     start_date, end_date = utils.convert_date_range(args.start, args.end)
     bidding_zone_input = args.bidding_zone
     output_file_path = args.output
+    resolution = args.resolution
 
     bidding_zones = utils.get_valid_bidding_zones(bidding_zone_input)
 
@@ -70,11 +74,12 @@ def main():
         return
 
     prices = core_functions.fetch_day_ahead_prices(
-        bidding_zones, 
-        start_date, 
-        end_date, 
-        entso_e_token, 
-        convert_to_nok=convert_to_nok
+        bidding_zones,
+        start_date,
+        end_date,
+        entso_e_token,
+        convert_to_nok=convert_to_nok,
+        resolution=resolution
     )
 
     if prices is None:

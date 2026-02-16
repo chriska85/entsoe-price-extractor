@@ -4,109 +4,138 @@ Simple Python tool to download day‑ahead electricity prices from the [ENTSO‑
 This README explains how to set up the project, obtain the required security token, run the command‑line script, and use the core function. Step‑by‑step examples are included to help users get started.
 
 ## ✅ Prerequisites
-- Python 3.9+ installed and on PATH. Check with:
+
+- Python 3.9+ installed and on PATH
    ```sh
    python --version
    ```
-- A free ENTSO‑E API token (see below).
+- A free ENTSO‑E API token (see [Setup](#-setup) section)
 
 ## 🚀 Setup
-1) Create and activate a virtual environment
 
-- Windows (PowerShell, CMD)
-   ```cmd
-   python -m venv venv
-   .\venv\Scripts\activate
-   ```
-- macOS / Linux
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+### 1. Create and activate a virtual environment
 
-2) Install dependencies
-- If requirements.txt is included:
-   ```bash
-   pip install -r requirements.txt
-   ```
+**Windows (PowerShell, CMD)**
+```cmd
+python -m venv venv
+.\venv\Scripts\activate
+```
 
-3) Generate and store your ENTSO‑E token 🔒
-- Follow: https://transparencyplatform.zendesk.com/hc/en-us/articles/12845911031188-How-to-get-security-token
-- Create a file named `.env` in the project root with this line (replace with your token; no angle brackets):
+**macOS / Linux**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+
+### 2. Install dependencies
+Install `uv` 
+```bash
+pip install uv
+```
+
+Maintaing dependencies using `uv` 
+```bash
+uv pip sync requirements.txt
+```
+
+
+### 3. Generate and store your ENTSO‑E token 🔒
+
+- Follow: [How to get security token](https://transparencyplatform.zendesk.com/hc/en-us/articles/12845911031188-How-to-get-security-token)
+- Create a `.env` file in the project root:
    ```
    MY_ENTSOE_TOKEN=your_actual_token_here
    ```
-- Important: Do not commit `.env` to version control. Keep the token private.
+- **Important:** Do not commit `.env` to version control. Keep the token private.
 
 ## ▶️ Basic usage
-Activate the virtual environment before running commands (see step 1).
 
-Command-line script: `entsoe_price_extract_cli.py`  
-- Script purpose: download day‑ahead prices for one or more bidding zones, optionally convert to NOK and/or generate interactive plots.
+Activate the virtual environment before running commands (see [Setup](#-setup)).
 
-General options (common)
-- `-a`, `--bidding_zone` : bidding zone names or keywords (examples: NO1, NO2, DE) or keyword groups: `all`, `nordics`, `norway`, `baltics`, `cwe`. Default: `norway`.
-- `-s`, `--start` : start date. Default: `DAY`. See date formats below.
-- `-e`, `--end` : end date. Default: `LAST_SDAC` (last Single Day‑Ahead Coupling auction). See date formats below.
-- `-nok`, `--convert_to_nok` : convert EUR to NOK (requires currency rates).
-- `-p`, `--plot` : show an interactive Plotly plot (requires plotly).
-- `-o`, `--output` : output file path (directory must exist). Example: `./output/prices.csv`
+### Command-line script: `entsoe_price_extract_cli.py`
+
+Download day‑ahead prices for one or more bidding zones, optionally convert to NOK and/or generate interactive plots.
+
+### General options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--bidding_zone` | `-a` | Bidding zone names or keywords: `NO1`, `NO2`, `DE`, or groups: `all`, `nordics`, `norway`, `baltics`, `cwe` (default: `norway`) |
+| `--start` | `-s` | Start date (default: `DAY`) |
+| `--end` | `-e` | End date (default: `LAST_SDAC`) |
+| `--convert_to_nok` | `-nok` | Convert EUR to NOK |
+| `--plot` | `-p` | Show interactive Plotly plot |
+| `--output` | `-o` | Output file path (directory must exist) |
+| `--resolution` | `-r` | Price output time resolution, e.g. `15min` or `60min` (default: `SDAC_MTU`) |
 
 ## 📅 Date formats and keywords
-- Exact dates:
-   - `YYYY-MM-DD` e.g. `2024-12-12`
-   - `YYYY-MM` (interpreted as the first day of month)
-   - `YYYY` (first day of year)
-- Relative / keywords:
-   - `DAY` — today
-   - `DAY+2D` — two days from today
-   - `YEAR` — January 1 of the current year
-   - `YEAR+W` — January 8 of the current year
-   - `YEAR-W` — seven days before Jan 1 of current year
-   - `YEAR-2Y` — Jan 1 two years ago
-   - `LAST_SDAC` — last Single Day-Ahead Coupling auction (special endpoint keyword)
 
-Combine these examples as start/end values when calling the CLI.
+**Exact dates:**
+- `YYYY-MM-DD` – e.g., `2024-12-12`
+- `YYYY-MM` – first day of month
+- `YYYY` – first day of year
+
+**Relative/keywords and offset:**
+- `DAY` – today
+- `DAY+2D` – two days from today
+- `YEAR` – January 1 of current year
+- `YEAR+W` – January 8 of current year
+- `YEAR-W` – seven days before Jan 1
+- `YEAR-2Y` – Jan 1 two years ago
+- `LAST_SDAC` – last Single Day-Ahead Coupling auction (does not work with time offset)
+
 
 ## 💡 Examples
-1) Today for Norway (NO1 and NO2) and Germany (DE), plot results:
+
 ```bash
+# Today for Norway and Germany with plot
 python entsoe_price_extract_cli.py -a NO1 NO2 DE -s DAY -e LAST_SDAC -p
-```
 
-2) From start of the year to start of this month, plot:
-```bash
-python entsoe_price_extract_cli.py -a NO1 NO2 DE -s YEAR -e MONTH -p
-```
+# Year-to-date with plot
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s YEAR -e LAST_SDAC -p
 
-3) Single day, convert to NOK and plot:
-```bash
-python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -p -nok
-```
+# Single day, convert to NOK and plot
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s 2024-12-12 -e 2024-12-13 -nok -p
 
-4) Norway for December 2024 and save CSV in current folder:
-```bash
-python entsoe_price_extract_cli.py -a norway -s 2024-12 -e 2025-01 -o ./norway_Dec_2024_DA_prices_EURMWh.csv
+# Last ten days up until last SDAC plot
+python entsoe_price_extract_cli.py -a NO1 NO2 DE -s DAYS-10D -e LAST_SDAC -p
+
+# December 2024 data, save as CSV
+python entsoe_price_extract_cli.py -a norway -s 2024-12 -e 2025-01 -o ./output/prices.csv
 ```
 
 ## 📝 Notes and tips
-- Always activate the virtual environment before running the script so installed dependencies are used.
-- If currency conversion (-nok) fails, check network access and that any external conversion service used by the script is reachable.
-- Output directory must exist beforehand. Use `mkdir output` or create your desired folder.
-- Treat your ENTSO‑E token as secret; never commit it.
+
+- Always activate the virtual environment before running the script
+- If currency conversion fails, check network access and external service availability
+- Output directory must exist beforehand (`mkdir output`)
+- Treat your ENTSO‑E token as secret; never commit it
 
 ## 🧰 Using the core function in Python
-- The package exposes a function (from core_functions) named `fetch_day_ahead_prices`. A simple Python example:
-   ```python
-   from core_functions import fetch_day_ahead_prices
 
-   # Example: fetch Norway (NO1) prices for a single day
-   df = fetch_day_ahead_prices(bidding_zones=["NO1"], start="2024-12-12", end="2024-12-13", convert_to_nok=False)
-   print(df.head())
-   ```
-- The demo script `entsoe_price_extract_demo.py` shows common usage patterns; run it to see sample code.
+The package exposes `fetch_day_ahead_prices` from `core_functions`:
+
+```python
+from core_functions import fetch_day_ahead_prices
+
+# Fetch Norway (NO1) prices for a single day
+df = fetch_day_ahead_prices(
+      bidding_zones=["NO1"],
+      start="2024-12-12",
+      end="2024-12-13",
+      convert_to_nok=False
+)
+print(df.head())
+```
+
+See `entsoe_price_extract_demo.py` for more usage patterns.
 
 ## 🐞 Troubleshooting
-- "403 / unauthorized": check your ENTSO‑E token in `.env` and ensure it's valid and active.
-- "ModuleNotFoundError": ensure you activated the venv and installed requirements into it.
-- "No data returned": verify the date range and bidding zone identifiers, and that the API supports the requested range.
+
+| Error | Solution |
+|-------|----------|
+| `requests.exceptions.HTTPError: 401` | Verify your ENTSO-E token in `.env` file: `MY_ENTSOE_TOKEN=<TOKEN>` |
+| `NameResolutionError` | Check your internet connection and DNS resolution |
+| `ModuleNotFoundError` | Activate the virtual environment and install requirements |
+| `entsoe.exceptions.NoMatchingDataError` | Verify date range and bidding zone identifiers are correct |

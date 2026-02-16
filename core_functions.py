@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+
 def fetch_day_ahead_prices(
         bidding_zone_list: list[str],
         start_time: str,
@@ -33,16 +34,16 @@ def fetch_day_ahead_prices(
     from Norges Bank.
 
     Args:
-        bidding_zone_list (list[str]): 
-            A list of bidding zones to query for data. 
+        bidding_zone_list (list[str]):
+            A list of bidding zones to query for data.
             Needs to correspond to the list of valid bidding zones in entsoe-py/entsoe/mappings.py
-        start_date (str): 
-            The start date of the interval to request data. 
-        end_date (str): 
-            The end date  (non inclusive) of the interval to request data. 
-        token (str): 
+        start_date (str):
+            The start date of the interval to request data.
+        end_date (str):
+            The end date  (non inclusive) of the interval to request data.
+        token (str):
             The token used for authorizing requests to ENTSO-E.
-        convert_to_nok (bool): 
+        convert_to_nok (bool):
             A boolean controlling conversion to NOK/kWh.
 
     Returns:
@@ -53,7 +54,7 @@ def fetch_day_ahead_prices(
     client = EntsoePandasClient(api_key=token)
 
     start_dt_cet = pd.Timestamp(start_time, tz="Europe/Oslo")
-    end_dt_cet   = pd.Timestamp(end_time, tz="Europe/Oslo")
+    end_dt_cet = pd.Timestamp(end_time, tz="Europe/Oslo")
 
     if end_dt_cet < start_dt_cet:
         logger.warning(
@@ -73,11 +74,12 @@ def fetch_day_ahead_prices(
     if resolution != "SDAC_MTU":
         full_price_df = full_price_df.ffill()
         logger.info(f"Resampling prices to resolution {resolution}")
-        if resolution == "60min":
+        if resolution in ["60min", "60", "h", "H", "hour", "HOUR", "hourly"]:
             full_price_df = full_price_df.resample('h').mean()
+        elif resolution in ["15min", "15", "q", "Q", "quarter", "QUARTER", "quarterly"]:
+            full_price_df = full_price_df.resample('15min').mean()
         else:
             logger.warning(f"Resolution {resolution} not supported. Continuing with SDAC_MTU")
-
 
     # ENTSO-E prices are in EUR/MWh. Conversion to NOK/kWh possible using
     # EUR -> NOK exchange rates from Norges Bank
@@ -98,6 +100,7 @@ def fetch_day_ahead_prices(
     full_price_df.attrs['unit'] = 'EUR/MWh' if not convert_to_nok else 'NOK/kWh'
 
     return full_price_df
+
 
 def fetch_conversion_rates(start_date: str, end_date: str):
     """
